@@ -41,7 +41,7 @@ Download **TrayPal-Setup.exe** from [Releases](../../releases). It installs for 
 
 ## Good to know
 
-- Light on resources: about 1 to 2 ms of CPU per second and roughly 40 MB of memory with the CPU + RAM graph on.
+- Light on resources: about 2 to 3 ms of CPU per second and roughly 40 MB of memory with the CPU + RAM graph on.
 - No telemetry and no network access of its own. It reads Windows' own counters and talks to your monitor over DDC/CI.
 - Network figures are for this PC only, not your whole home network.
 - Brightness needs a monitor that supports DDC/CI. Laptop built-in screens are not supported.

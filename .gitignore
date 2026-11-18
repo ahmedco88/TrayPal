@@ -1,2 +1,11 @@
 dist/
 *.pdb
+
+# THIS REPO IS PUBLIC. Private working notes, never commit.
+CLAUDE.md
+AGENTS.md
+memory.md
+memory-archive.md
+progress.md
+learnings.md
+learnings-archive.md
