@@ -25,7 +25,7 @@
 - Sharp on high-DPI screens (125%, 150% and up)
 
 <p align="center">
-  <img src="assets/screenshot-brightness.png" alt="Brightness slider" width="560">
+  <img src="assets/screenshot-panel.png" alt="Quick panel with brightness, contrast, monitor volume and PC sound" width="420">
 </p>
 
 ## Install
