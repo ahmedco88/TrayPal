@@ -13,12 +13,21 @@ sealed class DisplayMonitor
     public bool Supported;
     public uint Min, Max;
     public int Percent;
+    public bool HasContrast, HasVolume;
+    public int Contrast, Volume;
+    public uint ContrastMax, VolumeMax;
 
     public DisplayMonitor(IntPtr handle, string name) { Handle = handle; Name = name; }
 }
 
 static class Brightness
 {
+    public const byte VcpContrast = 0x12, VcpVolume = 0x62;
+
+    // Reading a code the monitor does not have is the slow case, so remember it per screen and code.
+    // ponytail: remembered until TrayPal restarts; a monitor that enables DDC/CI later needs a restart.
+    static readonly HashSet<string> unsupported = new HashSet<string>();
+
     // Every screen's physical monitors, with brightness read fresh. Caller must Close() the list.
     public static List<DisplayMonitor> Open()
     {
@@ -47,6 +56,19 @@ static class Brightness
                     m.Min = min;
                     m.Max = max;
                     m.Percent = (int)Math.Round((cur - min) * 100.0 / (max - min));
+                    // A failed brightness read means DDC/CI is off, so contrast and volume are only tried here.
+                    string dev = screens[i].DeviceName;
+                    int pc; uint mx;
+                    if (!unsupported.Contains(dev + ":" + VcpContrast))
+                    {
+                        if (TryGetVcp(m, VcpContrast, out pc, out mx)) { m.HasContrast = true; m.Contrast = pc; m.ContrastMax = mx; }
+                        else unsupported.Add(dev + ":" + VcpContrast);
+                    }
+                    if (!unsupported.Contains(dev + ":" + VcpVolume))
+                    {
+                        if (TryGetVcp(m, VcpVolume, out pc, out mx)) { m.HasVolume = true; m.Volume = pc; m.VolumeMax = mx; }
+                        else unsupported.Add(dev + ":" + VcpVolume);
+                    }
                 }
                 list.Add(m);
             }
@@ -61,6 +83,31 @@ static class Brightness
         Stamp();
         return ok;
     }
+
+    // Any VCP code (contrast 0x12, speaker volume 0x62) as 0-100. False when the monitor does not answer.
+    public static bool TryGetVcp(DisplayMonitor m, byte code, out int percent, out uint max)
+    {
+        uint cur;
+        Pace();
+        bool ok = GetVCPFeatureAndVCPFeatureReply(m.Handle, code, IntPtr.Zero, out cur, out max);
+        Stamp();
+        percent = 0;
+        if (!ok || max == 0) return false;
+        percent = (int)Math.Round(Math.Min(cur, max) * 100.0 / max);
+        return true;
+    }
+
+    public static bool SetVcp(DisplayMonitor m, byte code, int percent)
+    {
+        uint max = code == VcpContrast ? m.ContrastMax : m.VolumeMax;
+        Pace();
+        bool ok = SetVCPFeature(m.Handle, code, (uint)Math.Round(percent * max / 100.0));
+        Stamp();
+        return ok;
+    }
+
+    // WM_SYSCOMMAND / SC_MONITORPOWER / off. Sent to our own window: HWND_BROADCAST blocks on a hung app.
+    public static void ScreensOff(IntPtr hwnd) { SendMessage(hwnd, 0x0112, (IntPtr)0xF170, (IntPtr)2); }
 
     public static void Close(List<DisplayMonitor> list)
     {
@@ -102,6 +149,12 @@ static class Brightness
     static extern bool GetMonitorBrightness(IntPtr h, out uint min, out uint cur, out uint max);
     [DllImport("dxva2.dll", SetLastError = true)]
     static extern bool SetMonitorBrightness(IntPtr h, uint value);
+    [DllImport("dxva2.dll", SetLastError = true)]
+    static extern bool GetVCPFeatureAndVCPFeatureReply(IntPtr h, byte code, IntPtr codeType, out uint cur, out uint max);
+    [DllImport("dxva2.dll", SetLastError = true)]
+    static extern bool SetVCPFeature(IntPtr h, byte code, uint value);
+    [DllImport("user32.dll")]
+    static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr w, IntPtr l);
     [DllImport("dxva2.dll", SetLastError = true)]
     static extern bool DestroyPhysicalMonitor(IntPtr h);
 }

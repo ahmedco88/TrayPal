@@ -34,6 +34,7 @@ static class Program
     [STAThread]
     static void Main()
     {
+        Dpi.Declare();   // before any window exists, or Windows bitmap-stretches the whole UI
         bool created;
         using (var m = new System.Threading.Mutex(true, "TrayPal_SingleInstance", out created))
         {
@@ -49,7 +50,7 @@ class MeterForm : Form
     const string RegKey = @"Software\TrayPal";
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const int HistoryLen = 120;          // seconds of graph
-    const int HeaderH = 34;
+    static int HeaderH { get { return Dpi.S(34); } }
 
     readonly Timer timer = new Timer();
     readonly List<double> downHist = new List<double>();
@@ -77,7 +78,7 @@ class MeterForm : Form
 
     // Optional disk + battery line (off by default); text is rebuilt once a minute, not every tick.
     bool showInfo;
-    const int InfoH = 18;
+    static int InfoH { get { return Dpi.S(18); } }
     string infoText;                      // null = rebuild on the next tick
     DateTime infoAt;
 
@@ -86,10 +87,10 @@ class MeterForm : Form
     volatile bool repick = true;          // set from network-change events (other threads), so it only ever sets a flag
 
     // Fonts are created once, not on every paint.
-    readonly Font fHead = new Font("Segoe UI Semibold", 10f);
-    readonly Font fName = new Font("Segoe UI", 7.5f);
-    readonly Font fAxis = new Font("Segoe UI", 7f);
-    readonly Font fSys = new Font("Segoe UI Semibold", 9f);
+    readonly Font fHead = UiFont.Semibold(10f);
+    readonly Font fName = UiFont.Make(7.5f);
+    readonly Font fAxis = UiFont.Make(7f);
+    readonly Font fSys = UiFont.Semibold(9f);
 
     // ---------- theme ----------
     int themeMode;   // 0 = dark, 1 = light, 2 = match Windows
@@ -109,9 +110,8 @@ class MeterForm : Form
     {
         light = themeMode == 1 || (themeMode == 2 && WinTheme.IsLight());
         BackColor = WinBg;
-        if (themeMenu != null)
-            for (int i = 0; i < themeMenu.DropDownItems.Count; i++)
-                ((ToolStripMenuItem)themeMenu.DropDownItems[i]).Checked = i == themeMode;
+        if (settings != null && !settings.IsDisposed) settings.ApplyTheme(light);
+        if (focusWin != null && !focusWin.IsDisposed) focusWin.Restyle(light);
         Invalidate();
     }
 
@@ -147,14 +147,20 @@ class MeterForm : Form
         tray.Text = AppInfo.Name;
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
-        tray.DoubleClick += delegate { SetClickThrough(false); Show(); BringToFront(); Activate(); };
+        // Double-click toggles the meter. A click-through meter counts as "lost", so it comes back rather than hiding.
+        tray.DoubleClick += delegate
+        {
+            if (popup != null && !popup.IsDisposed) popup.Close(); // the first click of the pair opened it
+            if (Visible && !clickThrough) Hide();
+            else { SetClickThrough(false); Show(); BringToFront(); Activate(); }
+        };
         tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) ShowBrightness(); };
 
         ContextMenuStrip = menu;
         MouseDown += OnDrag;
 
         timer.Interval = 1000;
-        timer.Tick += delegate { Sample(); Invalidate(); };
+        timer.Tick += delegate { Sample(); FocusTick(); if (focusWin != null && !focusWin.IsDisposed) focusWin.UpdateView(); Invalidate(); };
         timer.Start();
         Sample();
     }
@@ -215,11 +221,11 @@ class MeterForm : Form
 
     string currentName = "";
 
-    int SysPanelH { get { return (int)(baseSize.Height * 0.8); } }
+    int SysPanelH { get { return (int)(Dpi.S(baseSize.Height) * 0.8); } }
 
     void ApplyLayout()
     {
-        Size = new Size(baseSize.Width, baseSize.Height + (showSys ? SysPanelH : 0) + (showInfo ? InfoH : 0));
+        Size = new Size(Dpi.S(baseSize.Width), Dpi.S(baseSize.Height) + (showSys ? SysPanelH : 0) + (showInfo ? InfoH : 0));
         // keep the window fully on screen when it grows
         var wa = Screen.FromPoint(Location).WorkingArea;
         int x = Math.Min(Math.Max(Left, wa.Left), wa.Right - Width);
@@ -362,13 +368,13 @@ class MeterForm : Form
         using (var uB = new SolidBrush(UpCol))
         using (var grey = new SolidBrush(SubText))
         {
-            g.DrawString("↓ " + Fmt(down), fHead, dB, 6, 2);
-            g.DrawString("↑ " + Fmt(up), fHead, uB, Width / 2 + 2, 2);
-            g.DrawString(Trunc(currentName, 40), fName, grey, 6, 19);
+            g.DrawString("↓ " + Fmt(down), fHead, dB, Dpi.S(6), Dpi.S(2));
+            g.DrawString("↑ " + Fmt(up), fHead, uB, Width / 2 + Dpi.S(2), Dpi.S(2));
+            g.DrawString(Trunc(currentName, 40), fName, grey, Dpi.S(6), Dpi.S(19));
         }
 
-        int netH = baseSize.Height;
-        var area = new Rectangle(4, HeaderH, Width - 8, netH - HeaderH - 4);
+        int netH = Dpi.S(baseSize.Height);
+        var area = new Rectangle(Dpi.S(4), HeaderH, Width - Dpi.S(8), netH - HeaderH - Dpi.S(4));
         using (var bg = new SolidBrush(PanelBg))
             g.FillRectangle(bg, area);
 
@@ -392,7 +398,7 @@ class MeterForm : Form
         {
             var lbl = Fmt(max);
             var sz = g.MeasureString(lbl, fAxis);
-            g.DrawString(lbl, fAxis, grey, area.Right - sz.Width - 1, area.Top + 1);
+            g.DrawString(lbl, fAxis, grey, area.Right - sz.Width - Dpi.S(1), area.Top + Dpi.S(1));
         }
 
         if (showSys) PaintSys(g, netH);
@@ -402,9 +408,10 @@ class MeterForm : Form
             using (var sf = new StringFormat(StringFormatFlags.NoWrap))
             {
                 sf.Trimming = StringTrimming.EllipsisCharacter;
-                g.DrawString(infoText, fName, grey, new RectangleF(6, Height - InfoH + 2, Width - 10, InfoH - 2), sf);
+                g.DrawString(infoText, fName, grey, new RectangleF(Dpi.S(6), Height - InfoH + Dpi.S(2), Width - Dpi.S(10), InfoH - Dpi.S(2)), sf);
             }
         }
+        PaintFocus(g);
     }
 
     void PaintSys(Graphics g, int y0)
@@ -412,12 +419,12 @@ class MeterForm : Form
         using (var cB = new SolidBrush(CpuCol))
         using (var rB = new SolidBrush(RamCol))
         {
-            g.DrawString("CPU " + cpu.ToString("0") + "%", fSys, cB, 6, y0);
-            g.DrawString("RAM " + ram.ToString("0") + "%", fSys, rB, Width / 2 + 2, y0);
+            g.DrawString("CPU " + cpu.ToString("0") + "%", fSys, cB, Dpi.S(6), y0);
+            g.DrawString("RAM " + ram.ToString("0") + "%", fSys, rB, Width / 2 + Dpi.S(2), y0);
         }
-        const int head = 18;
-        var area = new Rectangle(4, y0 + head, Width - 8, Height - (showInfo ? InfoH : 0) - y0 - head - 4);
-        if (area.Height < 8) return;
+        int head = Dpi.S(18);
+        var area = new Rectangle(Dpi.S(4), y0 + head, Width - Dpi.S(8), Height - (showInfo ? InfoH : 0) - y0 - head - Dpi.S(4));
+        if (area.Height < Dpi.S(8)) return;
         using (var bg = new SolidBrush(PanelBg))
             g.FillRectangle(bg, area);
         using (var grid = new Pen(GridCol))
@@ -445,7 +452,7 @@ class MeterForm : Form
         float x0 = a.Right - (h.Count - 1) * step;
         var pts = new PointF[h.Count];
         for (int i = 0; i < h.Count; i++)
-            pts[i] = new PointF(x0 + i * step, (float)(a.Bottom - h[i] / max * (a.Height - 2)));
+            pts[i] = new PointF(x0 + i * step, (float)(a.Bottom - h[i] / max * (a.Height - Dpi.S(2))));
         if (fill)
         {
             var poly = new List<PointF>(pts);
@@ -454,8 +461,84 @@ class MeterForm : Form
             using (var b = new SolidBrush(Color.FromArgb(70, c)))
                 g.FillPolygon(b, poly.ToArray());
         }
-        using (var p = new Pen(c, 1.5f))
+        using (var p = new Pen(c, Dpi.S(1.5f)))
             g.DrawLines(p, pts);
+    }
+
+    // ---------- focus timer ----------
+    readonly FocusTimer focus = new FocusTimer();
+    readonly Font fFocus = UiFont.Semibold(8.5f);
+    Rectangle focusRect;                       // where the countdown was last drawn; empty when hidden
+    Color FocusCol { get { return light ? C(176, 118, 0) : C(245, 179, 1); } }
+
+    public bool FocusRunning { get { return focus.Running; } }
+    // Every entry point (panel button, menu, focus window) goes through here: start opens the window, stop closes it.
+    public void ToggleFocus()
+    {
+        focus.Toggle();
+        if (focus.Running) ShowFocusWindow(); else CloseFocusWindow();
+        Invalidate();
+    }
+    public void FocusTogglePause() { focus.TogglePause(); Invalidate(); }
+    public void FocusAddFive() { focus.AddMinutes(5); Invalidate(); }
+
+    bool focusSound = true;                    // false: no ding at block change, the balloon still shows
+    public bool FocusSound
+    {
+        get { return focusSound; }
+        set { focusSound = value; SaveSettings(); }
+    }
+
+    FocusWindow focusWin;
+    bool focusHasPos;
+    Point focusPos;
+
+    void ShowFocusWindow()
+    {
+        if (focusWin != null && !focusWin.IsDisposed) return;
+        var w = new FocusWindow(this, focus, light, Bounds, focusHasPos ? (Point?)focusPos : null);
+        w.Moved += delegate(Point p) { focusHasPos = true; focusPos = p; SaveSettings(); };
+        w.FormClosed += delegate { if (focusWin == w) focusWin = null; };
+        focusWin = w;
+        w.Show();   // no owner: stays up when the meter is hidden
+    }
+
+    void CloseFocusWindow()
+    {
+        var w = focusWin;
+        focusWin = null;
+        if (w != null && !w.IsDisposed) w.Close();
+    }
+    public int FocusMinutes
+    {
+        get { return focus.FocusMinutes; }
+        set { focus.FocusMinutes = Math.Min(180, Math.Max(1, value)); SaveSettings(); }
+    }
+    public int BreakMinutes
+    {
+        get { return focus.BreakMinutes; }
+        set { focus.BreakMinutes = Math.Min(60, Math.Max(1, value)); SaveSettings(); }
+    }
+
+    void FocusTick()
+    {
+        if (!focus.Tick()) return;
+        if (focusSound) System.Media.SystemSounds.Asterisk.Play();
+        string text = focus.OnBreak ? "Focus block done. Break for " + focus.BreakMinutes + " min."
+                                    : "Break over. Focus for " + focus.FocusMinutes + " min.";
+        tray.ShowBalloonTip(5000, AppInfo.Name, text, ToolTipIcon.Info);
+    }
+
+    void PaintFocus(Graphics g)
+    {
+        string label = focus.Label;
+        if (label == null) { focusRect = Rectangle.Empty; return; }
+        var sz = g.MeasureString(label, fFocus);
+        // right-aligned on the adapter-name row; the top row is already full at narrow widths
+        var r = new Rectangle(Width - Dpi.S(6) - (int)Math.Ceiling(sz.Width), Dpi.S(17), (int)Math.Ceiling(sz.Width), (int)Math.Ceiling(sz.Height));
+        using (var bg = new SolidBrush(WinBg)) g.FillRectangle(bg, r);   // a long adapter name may run underneath
+        using (var b = new SolidBrush(FocusCol)) g.DrawString(label, fFocus, b, r.X, r.Y);
+        focusRect = r;
     }
 
     // ---------- dragging / click-through ----------
@@ -472,6 +555,7 @@ class MeterForm : Form
 
     void OnDrag(object s, MouseEventArgs e)
     {
+        if (e.Button == MouseButtons.Left && focusRect.Contains(e.Location)) { focus.TogglePause(); Invalidate(); return; }
         if (e.Button != MouseButtons.Left) return;
         ReleaseCapture();
         SendMessage(Handle, 0xA1, 2, 0); // WM_NCLBUTTONDOWN, HTCAPTION
@@ -487,9 +571,8 @@ class MeterForm : Form
         int ex = GetWindowLong(Handle, GWL_EXSTYLE) | WS_EX_LAYERED;
         ex = on ? ex | WS_EX_TRANSPARENT : ex & ~WS_EX_TRANSPARENT;
         SetWindowLong(Handle, GWL_EXSTYLE, ex);
-        if (clickThroughItem != null) clickThroughItem.Checked = on;
         SaveSettings();
-        if (on) tray.ShowBalloonTip(3000, AppInfo.Name, "Click-through on. Right-click the tray icon to turn it off.", ToolTipIcon.Info);
+        if (on) tray.ShowBalloonTip(3000, AppInfo.Name, "Click-through on. To turn it off: right-click the tray icon, Settings, Meter.", ToolTipIcon.Info);
     }
 
     protected override void OnShown(EventArgs e)
@@ -507,7 +590,7 @@ class MeterForm : Form
         // Clicking the tray icon while the card is open closes it (click-away) just before this runs,
         // so a click straight after a close is that same click: leave it closed.
         if ((popup != null && !popup.IsDisposed) || (DateTime.Now - popupClosed).TotalMilliseconds < 300) return;
-        popup = new BrightnessPopup(Cursor.Position, light);
+        popup = new BrightnessPopup(Cursor.Position, light, ShowSettings, ToggleFocus, delegate { return FocusRunning; });
         popup.FormClosed += delegate { popupClosed = DateTime.Now; };
         popup.Show();
     }
@@ -515,11 +598,15 @@ class MeterForm : Form
     static string WinSwitchText() { return WinTheme.IsLight() ? "Switch Windows to dark mode" : "Switch Windows to light mode"; }
 
     // ---------- menu ----------
-    ToolStripMenuItem themeMenu, clickThroughItem, adapterMenu, opacityMenu, sizeMenu, startupItem, bitsItem, winThemeItem;
+    ToolStripMenuItem winThemeItem;
 
     void BuildMenu()
     {
         menu = new ContextMenuStrip();
+
+        var settingsItem = new ToolStripMenuItem("Settings...");
+        settingsItem.Click += delegate { ShowSettings(); };
+        menu.Items.Add(settingsItem);
 
         var brightItem = new ToolStripMenuItem("Brightness...");
         brightItem.Click += delegate { ShowBrightness(); };
@@ -529,124 +616,101 @@ class MeterForm : Form
         winThemeItem.Click += delegate { WinTheme.Toggle(); winThemeItem.Text = WinSwitchText(); };
         menu.Items.Add(winThemeItem);
         menu.Opening += delegate { winThemeItem.Text = WinSwitchText(); };   // someone may have flipped it elsewhere
-        menu.Items.Add(new ToolStripSeparator());
 
-        adapterMenu = new ToolStripMenuItem("Adapter");
-        adapterMenu.DropDownOpening += delegate { FillAdapters(); };
-        adapterMenu.DropDownItems.Add("(loading)");
-        menu.Items.Add(adapterMenu);
-
-        opacityMenu = new ToolStripMenuItem("Opacity");
-        foreach (var o in new[] { 100, 85, 70, 55, 40 })
-        {
-            int val = o;
-            var it = new ToolStripMenuItem(o + "%");
-            it.Checked = Math.Abs(Opacity * 100 - o) < 1;
-            it.Click += delegate
-            {
-                Opacity = val / 100.0;
-                foreach (ToolStripMenuItem x in opacityMenu.DropDownItems) x.Checked = x == it;
-                SaveSettings();
-            };
-            opacityMenu.DropDownItems.Add(it);
-        }
-        menu.Items.Add(opacityMenu);
-
-        sizeMenu = new ToolStripMenuItem("Size");
-        foreach (var sz in new[] { new Size(200, 90), new Size(240, 110), new Size(320, 150) })
-        {
-            var s2 = sz;
-            var it = new ToolStripMenuItem(sz.Width + " x " + sz.Height);
-            it.Checked = baseSize == sz;
-            it.Click += delegate
-            {
-                baseSize = s2; ApplyLayout();
-                foreach (ToolStripMenuItem x in sizeMenu.DropDownItems) x.Checked = x == it;
-                SaveSettings(); Invalidate();
-            };
-            sizeMenu.DropDownItems.Add(it);
-        }
-        menu.Items.Add(sizeMenu);
-
-        bitsItem = new ToolStripMenuItem("Show in Mb/s (bits)");
-        bitsItem.Checked = useBits;
-        bitsItem.Click += delegate { useBits = !useBits; bitsItem.Checked = useBits; SaveSettings(); Invalidate(); };
-        menu.Items.Add(bitsItem);
-
-        themeMenu = new ToolStripMenuItem("Theme");
-        var themeNames = new[] { "Dark", "Light", "Match Windows" };
-        for (int i = 0; i < themeNames.Length; i++)
-        {
-            int mode = i;
-            var it = new ToolStripMenuItem(themeNames[i]);
-            it.Click += delegate { themeMode = mode; ApplyTheme(); SaveSettings(); };
-            themeMenu.DropDownItems.Add(it);
-        }
-        menu.Items.Add(themeMenu);
-
-        var sysItem = new ToolStripMenuItem("Show CPU + RAM graph");
-        sysItem.Checked = showSys;
-        sysItem.Click += delegate
-        {
-            showSys = !showSys; sysItem.Checked = showSys;
-            if (!showSys) { cpuHist.Clear(); ramHist.Clear(); }
-            else if (cpuState == 2) cpuState = 0;   // retry a counter that failed earlier
-            ApplyLayout(); SaveSettings();
-        };
-        menu.Items.Add(sysItem);
-
-        var infoItem = new ToolStripMenuItem("Show disk + battery line");
-        infoItem.Checked = showInfo;
-        infoItem.Click += delegate
-        {
-            showInfo = !showInfo; infoItem.Checked = showInfo;
-            infoText = null;
-            if (showInfo) RefreshInfo();
-            ApplyLayout(); SaveSettings();
-        };
-        menu.Items.Add(infoItem);
-
-        var topItem = new ToolStripMenuItem("Always on top");
-        topItem.Checked = onTop;
-        topItem.Click += delegate { onTop = !onTop; TopMost = onTop; topItem.Checked = onTop; SaveSettings(); };
-        menu.Items.Add(topItem);
-
-        clickThroughItem = new ToolStripMenuItem("Click-through (ignore mouse)");
-        clickThroughItem.Checked = clickThrough;
-        clickThroughItem.Click += delegate { SetClickThrough(!clickThrough); };
-        menu.Items.Add(clickThroughItem);
-
-        startupItem = new ToolStripMenuItem("Start with Windows");
-        startupItem.Checked = IsStartup();
-        startupItem.Click += delegate { SetStartup(!IsStartup()); startupItem.Checked = IsStartup(); };
-        menu.Items.Add(startupItem);
+        var focusItem = new ToolStripMenuItem("Start focus timer");
+        focusItem.Click += delegate { ToggleFocus(); };
+        menu.Items.Add(focusItem);
+        menu.Opening += delegate { focusItem.Text = FocusRunning ? "Stop focus timer" : "Start focus timer"; };
 
         menu.Items.Add(new ToolStripSeparator());
-        var about = new ToolStripMenuItem("About " + AppInfo.Name + "...");
-        about.Click += delegate { using (var a = new AboutForm(Icon)) a.ShowDialog(this); };
-        menu.Items.Add(about);
         var exit = new ToolStripMenuItem("Exit");
         exit.Click += delegate { SaveSettings(); tray.Visible = false; Application.Exit(); };
         menu.Items.Add(exit);
     }
 
-    void FillAdapters()
+    // ---------- settings API (used by SettingsForm) ----------
+    // Each setter does what the old menu item did: apply, save, repaint.
+    SettingsForm settings;
+
+    public void ShowSettings()
     {
-        adapterMenu.DropDownItems.Clear();
-        var auto = new ToolStripMenuItem("Auto (main connection)");
-        auto.Checked = adapterId == "";
-        auto.Click += delegate { adapterId = ""; lastRx = -1; repick = true; SaveSettings(); };
-        adapterMenu.DropDownItems.Add(auto);
-        adapterMenu.DropDownItems.Add(new ToolStripSeparator());
-        foreach (var n in NetworkInterface.GetAllNetworkInterfaces()
-                 .Where(a => a.NetworkInterfaceType != NetworkInterfaceType.Loopback && a.OperationalStatus == OperationalStatus.Up))
+        if (settings == null || settings.IsDisposed) settings = new SettingsForm(this);
+        settings.Show();
+        settings.Activate();
+    }
+
+    public bool IsLight { get { return light; } }
+
+    public int ThemeMode
+    {
+        get { return themeMode; }
+        set { themeMode = Math.Min(2, Math.Max(0, value)); ApplyTheme(); SaveSettings(); }
+    }
+
+    public bool AlwaysOnTop
+    {
+        get { return onTop; }
+        set { onTop = value; TopMost = value; SaveSettings(); }
+    }
+
+    public bool ClickThrough
+    {
+        get { return clickThrough; }
+        set { SetClickThrough(value); }   // saves and shows the balloon itself
+    }
+
+    public int OpacityPercent
+    {
+        get { return (int)Math.Round(Opacity * 100); }
+        set { Opacity = Math.Min(100, Math.Max(40, value)) / 100.0; SaveSettings(); }
+    }
+
+    public Size MeterSize
+    {
+        get { return baseSize; }
+        set { baseSize = value; ApplyLayout(); SaveSettings(); Invalidate(); }
+    }
+
+    public bool UseBits
+    {
+        get { return useBits; }
+        set { useBits = value; SaveSettings(); Invalidate(); }
+    }
+
+    public bool ShowSys
+    {
+        get { return showSys; }
+        set
         {
-            string id = n.Id;
-            var it = new ToolStripMenuItem(n.Name + "  (" + n.Description + ")");
-            it.Checked = adapterId == id;
-            it.Click += delegate { adapterId = id; lastRx = -1; repick = true; SaveSettings(); };
-            adapterMenu.DropDownItems.Add(it);
+            showSys = value;
+            if (!showSys) { cpuHist.Clear(); ramHist.Clear(); }
+            else if (cpuState == 2) cpuState = 0;   // retry a counter that failed earlier
+            ApplyLayout(); SaveSettings(); Invalidate();
         }
+    }
+
+    public bool ShowInfo
+    {
+        get { return showInfo; }
+        set
+        {
+            showInfo = value;
+            infoText = null;
+            if (showInfo) RefreshInfo();
+            ApplyLayout(); SaveSettings(); Invalidate();
+        }
+    }
+
+    public string AdapterId
+    {
+        get { return adapterId; }
+        set { adapterId = value ?? ""; lastRx = -1; repick = true; SaveSettings(); }
+    }
+
+    public bool StartWithWindows
+    {
+        get { return IsStartup(); }
+        set { SetStartup(value); }
     }
 
     // ---------- settings ----------
@@ -669,7 +733,7 @@ class MeterForm : Form
     {
         Opacity = 0.85;
         var wa = Screen.PrimaryScreen.WorkingArea;
-        Location = new Point(wa.Right - baseSize.Width - 12, wa.Bottom - baseSize.Height - 12);
+        Location = new Point(wa.Right - Dpi.S(baseSize.Width) - Dpi.S(12), wa.Bottom - Dpi.S(baseSize.Height) - Dpi.S(12));
         using (var k = Registry.CurrentUser.OpenSubKey(RegKey))
         {
             if (k == null) return;
@@ -688,6 +752,14 @@ class MeterForm : Form
                 showInfo = (int)k.GetValue("Info", 0) == 1;
                 onTop = (int)k.GetValue("OnTop", 1) == 1;
                 themeMode = Math.Min(2, Math.Max(0, (int)k.GetValue("Theme", 0)));
+                focus.FocusMinutes = Math.Min(180, Math.Max(1, (int)k.GetValue("FocusMin", 25)));
+                focus.BreakMinutes = Math.Min(60, Math.Max(1, (int)k.GetValue("BreakMin", 5)));
+                focusSound = (int)k.GetValue("FocusSound", 1) == 1;
+                if (k.GetValue("FocusX") != null && k.GetValue("FocusY") != null)
+                {
+                    focusPos = new Point((int)k.GetValue("FocusX"), (int)k.GetValue("FocusY"));
+                    focusHasPos = true;
+                }
             }
             catch { }
         }
@@ -709,6 +781,10 @@ class MeterForm : Form
                 k.SetValue("Info", showInfo ? 1 : 0);
                 k.SetValue("OnTop", onTop ? 1 : 0);
                 k.SetValue("Theme", themeMode);
+                k.SetValue("FocusMin", focus.FocusMinutes);
+                k.SetValue("BreakMin", focus.BreakMinutes);
+                k.SetValue("FocusSound", focusSound ? 1 : 0);
+                if (focusHasPos) { k.SetValue("FocusX", focusPos.X); k.SetValue("FocusY", focusPos.Y); }
             }
         }
         catch { }
@@ -719,6 +795,7 @@ class MeterForm : Form
         SystemEvents.UserPreferenceChanged -= OnWinPrefChanged;
         NetworkChange.NetworkAddressChanged -= OnNetChanged;
         NetworkChange.NetworkAvailabilityChanged -= OnNetAvailChanged;
+        CloseFocusWindow();
         if (popup != null && !popup.IsDisposed) popup.Close();   // runs its final brightness write and releases the monitors
         SaveSettings(); tray.Visible = false; base.OnFormClosing(e);
     }
@@ -727,54 +804,10 @@ class MeterForm : Form
     {
         if (disposing)
         {
-            fHead.Dispose(); fName.Dispose(); fAxis.Dispose(); fSys.Dispose();
+            fHead.Dispose(); fName.Dispose(); fAxis.Dispose(); fSys.Dispose(); fFocus.Dispose();
             var cc = cpuCounter;
             if (cc != null) cc.Dispose();
         }
         base.Dispose(disposing);
-    }
-}
-
-class AboutForm : Form
-{
-    public AboutForm(Icon icon)
-    {
-        Text = "About " + AppInfo.Name;
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
-        StartPosition = FormStartPosition.CenterScreen;
-        TopMost = true;
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(340, 224);
-        Font = new Font("Segoe UI", 9f);
-        if (icon != null) Icon = icon;
-
-        var pic = new PictureBox { Location = new Point(16, 16), Size = new Size(48, 48), SizeMode = PictureBoxSizeMode.Zoom };
-        if (icon != null) pic.Image = new Icon(icon, 48, 48).ToBitmap();
-        Controls.Add(pic);
-
-        Controls.Add(new Label { Text = AppInfo.Name, Font = new Font("Segoe UI Semibold", 14f), Location = new Point(76, 14), AutoSize = true });
-        Controls.Add(new Label { Text = "Version " + AppInfo.Version, Location = new Point(78, 44), AutoSize = true, ForeColor = Color.DimGray });
-        Controls.Add(new Label
-        {
-            Text = "A tiny always-on-top desktop companion: live network speed, with optional CPU, RAM, disk and battery readouts, a monitor brightness slider and a Windows light/dark switch. Free and open source (MIT).",
-            Location = new Point(16, 76), Size = new Size(308, 62)
-        });
-
-        int y = 146;
-        AddLink("Made by Ahmed \u2013 mrobaidi.com", AppInfo.Website, ref y);
-        if (AppInfo.Repo != "") AddLink("Source code on GitHub", AppInfo.Repo, ref y);
-
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(250, 188), Size = new Size(75, 26) };
-        Controls.Add(ok);
-        AcceptButton = ok; CancelButton = ok;
-    }
-
-    void AddLink(string text, string url, ref int y)
-    {
-        var l = new LinkLabel { Text = text, Location = new Point(16, y), AutoSize = true };
-        l.LinkClicked += delegate { try { System.Diagnostics.Process.Start(url); } catch { } };
-        Controls.Add(l);
-        y += 22;
     }
 }

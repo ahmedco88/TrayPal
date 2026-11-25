@@ -18,9 +18,11 @@
 - **Network speed:** live download and upload with a two-minute graph
 - **CPU and RAM:** optional graph underneath
 - **Disk and battery:** optional one-line readout of free space, plus battery percent on laptops
-- **Brightness:** click the tray icon for a slider (external monitors, via DDC/CI)
-- **Windows dark/light mode:** switch from the right-click menu
-- Dark, light or match-Windows theme, adjustable opacity and size, click-through, and start with Windows
+- **Quick panel:** click the tray icon for brightness, contrast and the monitor's own speaker volume (external monitors, via DDC/CI), plus your PC's sound with mute, a "screens off" button, and a soft ding so you hear the new volume
+- **Focus timer:** 25-minute focus and 5-minute break blocks, with a small window to add time, pause, mute the ring or stop
+- **Windows dark/light mode:** one click from the quick panel or the right-click menu
+- **Settings window:** dark, light or match-Windows theme, opacity, size, click-through, start with Windows and timer lengths
+- Sharp on high-DPI screens (125%, 150% and up)
 
 <p align="center">
   <img src="assets/screenshot-brightness.png" alt="Brightness slider" width="560">
@@ -35,16 +37,16 @@ Download **TrayPal-Setup.exe** from [Releases](../../releases). It installs for 
 ## Use
 
 - **Move:** drag it. It remembers where you left it.
-- **Brightness:** left-click the tray icon, or right-click, Brightness...
-- **Everything else:** right-click the window or the tray icon.
-- **Hidden or click-through?** Double-click the tray icon.
+- **Quick panel:** left-click the tray icon. The gear opens Settings.
+- **Settings and focus timer:** right-click the window or the tray icon.
+- **Show or hide the meter:** double-click the tray icon. It also brings back a click-through meter.
 
 ## Good to know
 
 - Light on resources: about 2 to 3 ms of CPU per second and roughly 40 MB of memory with the CPU + RAM graph on.
 - No telemetry and no network access of its own. It reads Windows' own counters and talks to your monitor over DDC/CI.
 - Network figures are for this PC only, not your whole home network.
-- Brightness needs a monitor that supports DDC/CI. Laptop built-in screens are not supported.
+- Brightness, contrast and monitor volume need a monitor that supports DDC/CI; a slider only shows if your monitor reports it. Laptop built-in screens are not supported.
 
 ## Build
 
