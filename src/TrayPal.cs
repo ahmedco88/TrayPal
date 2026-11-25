@@ -24,7 +24,7 @@ using System.Reflection;
 static class AppInfo
 {
     public const string Name = "TrayPal";
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
     public const string Website = "https://mrobaidi.com";
     public const string Repo = "https://github.com/ahmedco88/traypal";
 }

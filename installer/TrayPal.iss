@@ -1,7 +1,7 @@
 ﻿; Inno Setup 6 script for TrayPal. Per-user install, no admin prompt.
 #define AppName "TrayPal"
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
 #endif
 
 [Setup]
